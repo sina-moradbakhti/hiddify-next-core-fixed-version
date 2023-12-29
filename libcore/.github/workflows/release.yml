@@ -1,0 +1,147 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - '!.github/workflows/release.yml'
+
+jobs:
+  build:
+    permissions: write-all
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { os: 'ubuntu-latest', target: 'android' }
+          - { os: 'ubuntu-latest', target: 'linux-amd64', aarch: 'x64' }
+          - { os: 'ubuntu-latest', target: 'windows-amd64', aarch: 'x64' }
+          - { os: 'macos-11', target: 'macos-universal' }
+          - { os: "macos-11", target: "ios" }
+
+    runs-on: ${{ matrix.job.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: 'go.mod'
+          check-latest: false
+
+      - name: Setup Java
+        if: startsWith(matrix.job.target,'android')
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup NDK
+        if: startsWith(matrix.job.target,'android')
+        uses: nttld/setup-ndk@v1.4.0
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+          add-to-path: true
+          local-cache: false
+          link-to-sdk: true
+
+      - name: Setup MinGW
+        if: startsWith(matrix.job.target,'windows')
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: ${{ matrix.job.aarch }}
+
+      - name: Setup macos
+        if: startsWith(matrix.job.target,'macos') ||  startsWith(matrix.job.target,'ios')
+        run: |
+          brew install create-dmg tree coreutils
+
+      - name: Build
+        run: |
+          make -j$(($(nproc) + 1)) ${{ matrix.job.target }}
+
+      - name: zip
+        run: |
+          tree 
+          rm -f ./bin/*.h
+          rm ./bin/hiddify-libcore*sources* ||echo "no source"
+          rm ./bin/hiddify-libcore-macos-a*.dylib || echo "no macos arm and amd"
+          if [[ "${{ matrix.job.target }}" == "ios" ]];then
+              cd bin
+              tar -czvf hiddify-libcore-ios.xcframework.tar.gz hiddify-libcore-ios.xcframework
+              rm -rf hiddify-libcore-ios.xcframework
+          else
+              gzip -r -S ".gz" ./bin/hiddify-libcore*
+          fi
+
+      - uses: actions/upload-artifact@v3
+        if: ${{ success() }}
+        with:
+          name: artifact
+          path: bin/
+
+  upload-prerelease:
+    permissions: write-all
+    if: ${{ github.ref_type=='branch' }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: artifact
+          path: bin/
+
+      - name: Display Files Structure
+        run: ls -R
+        working-directory: bin
+
+      - name: Delete Current Release Assets
+        uses: 8Mi-Tech/delete-release-assets-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: 'draft'
+          deleteOnlyFromDrafts: false
+
+      - name: Create or Update Draft Release
+        uses: softprops/action-gh-release@v1
+        if: ${{ success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: ./bin/*
+          name: 'draft'
+          tag_name: 'draft'
+          prerelease: true
+
+  upload-release:
+    permissions: write-all
+    if: ${{ github.ref_type=='tag' }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: artifact
+          path: bin/
+
+      - name: Display Files Structure
+        run: ls -R
+        working-directory: bin
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        if: ${{ success() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: bin/*
