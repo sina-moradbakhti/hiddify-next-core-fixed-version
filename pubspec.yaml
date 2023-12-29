@@ -88,6 +88,9 @@ dev_dependencies:
   custom_lint: ^0.5.7
   riverpod_lint: ^2.3.7
   icons_launcher: ^2.1.6
+  # 1st, run this command  : dart pub global activate flutter_gen
+  # 2nd, run this command  : dart run build_runner build
+  # 3rd, run this command  : fluttergen
 
 flutter:
   uses-material-design: true
